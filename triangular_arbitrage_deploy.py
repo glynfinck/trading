@@ -1,6 +1,6 @@
 from prefect_github import GitHubCredentials
 from prefect.runner.storage import GitRepository
-from . import triangular_arbitrage
+from triangular_arbitrage import triangular_arbitrage
 
 if __name__ == "__main__":
     source = GitRepository(
