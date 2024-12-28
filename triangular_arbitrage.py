@@ -15,6 +15,9 @@ import itertools
 from prefect.variables import Variable
 from shared.utils import send_email
 
+from prefect_github import GitHubCredentials
+from prefect.runner.storage import GitRepository
+
 @task
 def get_assets():
     data = requests.get("https://api.kraken.com/0/public/Assets").json()
@@ -328,8 +331,17 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         logger.info(f"Just traded! Made a profit of: ${round((max_profit.get("current_profit") - 1) * trade_size, 2)}")
 
 if __name__ == "__main__":
-    triangular_arbitrage.deploy(
+    source = GitRepository(
+        url="https://github.com/glynfinck/trading.git",
+        credentials=GitHubCredentials.load("github-credentials"),
+        branch="main"
+    )
+
+    triangular_arbitrage.from_source(
+        source=source, 
+        entrypoint="triangular_arbitrage.py:triangular_arbitrage") \
+    .deploy(
         name="triangular-arbitrage",
         work_pool_name="default",
-        cron="*/10 * * * *",
+        interval=10
     )
