@@ -99,6 +99,28 @@ def cancel_all_orders():
     return response.json()
 
 @task
+def get_all_currency_tickers_data() -> pd.DataFrame:
+    url = f"https://api.kraken.com/0/public/Ticker"
+    response = requests.get(url)
+    result: dict = response.json().get('result')
+    asset_pairs = get_asset_pairs()
+    asset_pair_map = { x["name"]: x["altname"] for x in asset_pairs.to_dict("records") }
+    return pd.DataFrame([ { 
+            "name" : k,
+            "altname" : asset_pair_map.get(k),
+            "ask" : float(v.get("a")[0]), 
+            "ask_wlv" : float(v.get("a")[1]),
+            "ask_lv" : float(v.get("a")[2]),
+            "bid" : float(v.get("b")[0]), 
+            "bid_wlv" : float(v.get("b")[1]),
+            "bid_lv" : float(v.get("b")[2]),
+            "close": float(v.get("c")[0]),
+            "close_lv": float(v.get("c")[1]),
+        }
+        for k,v in result.items()
+    ], columns=["name","altname","ask","ask_wlv","ask_lv","bid","bid_wlv","bid_lv","close","close_lv"])
+
+@task
 def get_current_balance() -> pd.DataFrame:
 
     nonce = str(int(1000 * time.time()))
@@ -121,7 +143,7 @@ def get_current_balance() -> pd.DataFrame:
     exchange_rate_data = pd.concat([exchange_rate_data_1, exchange_rate_data_2])
     exchange_rate_data["pair"] = exchange_rate_data["from_iso"] + exchange_rate_data["to_iso"]
 
-    close_data = get_currency_tickers_data(exchange_rate_data["pair"].to_list())[["pair","close"]]
+    close_data = get_all_currency_tickers_data()[["pair","close"]]
     exchange_rate_data = exchange_rate_data.merge(close_data, how="inner", on=["pair"])
     exchange_rate_data_reverse = exchange_rate_data.copy(True)
     temp = exchange_rate_data_reverse["from_iso"]
@@ -156,27 +178,6 @@ def add_order(pair: str, action_type: str, volume: float, price: float, validate
     response = requests.request("POST", api_url + uri_path, headers=headers, data=data)
     return response.json()
 
-@task
-def get_all_currency_tickers_data() -> pd.DataFrame:
-    url = f"https://api.kraken.com/0/public/Ticker"
-    response = requests.get(url)
-    result: dict = response.json().get('result')
-    asset_pairs = get_asset_pairs()
-    asset_pair_map = { x["name"]: x["altname"] for x in asset_pairs.to_dict("records") }
-    return pd.DataFrame([ { 
-            "name" : k,
-            "altname" : asset_pair_map.get(k),
-            "ask" : float(v.get("a")[0]), 
-            "ask_wlv" : float(v.get("a")[1]),
-            "ask_lv" : float(v.get("a")[2]),
-            "bid" : float(v.get("b")[0]), 
-            "bid_wlv" : float(v.get("b")[1]),
-            "bid_lv" : float(v.get("b")[2]),
-            "close": float(v.get("c")[0]),
-            "close_lv": float(v.get("c")[1]),
-        }
-        for k,v in result.items()
-    ], columns=["name","altname","ask","ask_wlv","ask_lv","bid","bid_wlv","bid_lv","close","close_lv"])
 
 @task
 def get_currency_data() -> pd.DataFrame:
