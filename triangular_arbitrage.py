@@ -6,7 +6,6 @@ import base64
 import requests
 import pandas as pd
 from prefect import flow, task, get_run_logger
-from prefect.task_runners import ThreadPoolTaskRunner
 from database import utils
 import itertools
 from prefect.variables import Variable
@@ -183,7 +182,7 @@ def add_order(pair: str, action_type: str, volume: float, price: float, validate
 def get_currency_data() -> pd.DataFrame:
     return utils.query_table("SELECT currency,iso FROM \"Currency\"")
 
-@flow(task_runner=ThreadPoolTaskRunner(max_workers=20))
+@flow()
 def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, wait_seconds: float = 2.0, n_iterations: int = 600):
     logger = get_run_logger()
 
