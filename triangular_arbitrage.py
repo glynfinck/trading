@@ -1,4 +1,3 @@
-
 import time
 import urllib.parse
 import hashlib
@@ -6,17 +5,53 @@ import hmac
 import base64
 import requests
 import pandas as pd
-import concurrent.futures
 from prefect import flow, task, get_run_logger
-from prefect.futures import wait
 from prefect.task_runners import ThreadPoolTaskRunner
 from database import utils
 import itertools
 from prefect.variables import Variable
 from shared.utils import send_email
 
-from prefect_github import GitHubCredentials
-from prefect.runner.storage import GitRepository
+class CurrencyData:
+    
+    symbol: str
+    ask_price: float
+    ask_quantity: float
+    bid_price: float
+    bid_quantity: float
+
+    def __init__(self, symbol: str, ask_price: float, ask_quantity: float, bid_price: float, bid_quantity: float):
+        self.symbol = symbol
+        self.ask_price = ask_price
+        self.ask_quantity = ask_quantity
+        self.bid_price = bid_price
+        self.bid_quantity = bid_quantity
+
+class TriangularArbitrage:
+
+    def __init__(self):
+        pass
+
+    def __get_currency_data(tickers: list[str]) -> list[CurrencyData]:
+        pass
+
+    def run(self, tickers: list[str]):
+        
+        # 1. 
+        currency = self.__get_currency_data(tickers)
+
+class BinanaceTriangularArbitrage(TriangularArbitrage):
+
+    def __get_currency_data(tickers: list[str]) -> list[CurrencyData]:
+        response = requests.get("https://api.binance.com/api/v3/ticker/bookTicker")
+        json: list[dict] = response.json()
+        return [ CurrencyData(item.get("symbol"), item.get("bidPrice"), item.get("bidQty"), item.get("askPrice"), item.get("askQty")) for item in json ]
+
+class KrakenTriangularArbitrage(TriangularArbitrage):
+
+    def __get_currency_data(tickers: list[str]) -> list[CurrencyData]:
+        pass
+    
 
 @task
 def get_assets():
@@ -122,46 +157,6 @@ def add_order(pair: str, action_type: str, volume: float, price: float, validate
     return response.json()
 
 @task
-def get_current_ticker_data(ticker: str) -> dict:
-    url = f"https://api.kraken.com/0/public/Ticker?pair={ticker}"
-    response = requests.get(url)
-    json = response.json()
-    if json.get("result") == None:
-        return None
-    data: dict = list(response.json().get('result').values())[0]
-    return { 
-            "pair" : ticker,
-            "ask" : float(data.get("a")[0]), 
-            "ask_wlv" : float(data.get("a")[1]),
-            "ask_lv" : float(data.get("a")[2]),
-            "bid" : float(data.get("b")[0]), 
-            "bid_wlv" : float(data.get("b")[1]),
-            "bid_lv" : float(data.get("b")[2]),
-            "close": float(data.get("c")[0]),
-            "close_lv": float(data.get("c")[1]),
-        }
-
-@task
-def get_currency_tickers_data(tickers: list[str]) -> pd.DataFrame:
-    all_data = dict()
-    for ticker in tickers:
-        all_data[ticker] = get_current_ticker_data.submit(ticker)
-    for k,v in all_data.items():
-        all_data[k] = all_data[k].result()
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-    #     # Start the load operations and mark each future with its URL
-    #     future_data = { executor.submit(get_current_ticker_data, ticker) : ticker for ticker in tickers }
-    #     for future in concurrent.futures.as_completed(future_data):
-    #         ticker = future_data[future]
-    #         try:
-    #             data = future.result()
-    #         except Exception as exc:
-    #             print(f"The ticker {ticker} produced the following exception: {exc}")
-    #         else:
-    #             all_data[ticker] = data
-    return pd.DataFrame([ all_data[pair] for pair in tickers if all_data[pair] != None ],columns=["pair","ask","ask_wlv","ask_lv","bid","bid_wlv","bid_lv","close","close_lv"])
-
-@task
 def get_all_currency_tickers_data() -> pd.DataFrame:
     url = f"https://api.kraken.com/0/public/Ticker"
     response = requests.get(url)
@@ -188,7 +183,7 @@ def get_currency_data() -> pd.DataFrame:
     return utils.query_table("SELECT currency,iso FROM \"Currency\"")
 
 @flow(task_runner=ThreadPoolTaskRunner(max_workers=20))
-def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, min_position_size: float = 500, trade_size = 1000):
+def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, wait_seconds: float = 2.0, n_iterations: int = 600):
     logger = get_run_logger()
 
     # 1. Get unique pairs.
@@ -258,89 +253,52 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         if valid:
             valid_groups.append(group)
     logger.info(f"Number of valid groups: {len(valid_groups)}")
+    valid_currencies = list(set([ x for y in valid_groups for x in y ]))
 
     # 5. Throw error if there are no groups left.
     if len(valid_groups) == 0:
         logger.warning("No tradeable groups.")
         return
 
-    # 6. Get data concurrently.
-    valid_currencies = list(set([ x for y in valid_groups for x in y ]))
-    valid_groups_df = get_all_currency_tickers_data()
-    valid_groups_df = valid_groups_df.loc[valid_groups_df["altname"].isin(valid_currencies) | valid_groups_df["name"].isin(valid_currencies)]
-
-    # 7. Query current close from all market status.
-    groups_df = pd.DataFrame([ { "group" : i + 1, "order" : j + 1, "altname" : altname } for i,y in enumerate(valid_groups) for j,altname in enumerate(y) ])
-    groups_pivot_df = groups_df.merge(valid_groups_df,how="left",on=["altname"]).pivot(index=["group"],columns=["order"],values=["altname", "ask","bid"])
-    groups_pivot_df["bid_1"] = groups_pivot_df["bid"][1]
-    groups_pivot_df["bid_2"] = groups_pivot_df["bid"][2]
-    groups_pivot_df["ask_3"] = groups_pivot_df["ask"][3]
-    groups_pivot_df["current_profit"] = groups_pivot_df["bid"][1] * groups_pivot_df["bid"][2] * (1 / groups_pivot_df["ask"][3])
-    groups_pivot_df["pairs"] = groups_pivot_df["altname"].apply(lambda x: [x[1],x[2],x[3]], axis=1)
-    groups_pivot_df = pd.DataFrame({ "pairs" : pd.Series(groups_pivot_df["pairs"].to_list()), "bid_1": pd.Series(groups_pivot_df["bid_1"].to_list()), "bid_2":pd.Series(groups_pivot_df["bid_2"].to_list()), "ask_3": pd.Series(groups_pivot_df["ask_3"].to_list()), "current_profit" : pd.Series(groups_pivot_df["current_profit"].to_list()) })
-    
-    # 8. Take the greatest profit.
-    max_profit = groups_pivot_df.loc[groups_pivot_df["current_profit"] == groups_pivot_df["current_profit"].max()].to_dict("records")[0]
-
-    # 9. Execute trade if the profit exceeds threshold.
-    logger.info(f"Max profit: {max_profit.get("current_profit")}")
-    if max_profit.get("current_profit") > 1 + (((fee * 3) + threshold) / 100):
+    # 6. Start loop to check multiple times.
+    for _ in range(n_iterations):
         
-        logger.info(f"First: pair = {max_profit.get("pairs")[0]}, bid = {max_profit.get("bid_1")}")
-        logger.info(f"Second: pair = {max_profit.get("pairs")[1]}, bid = {max_profit.get("bid_2")}")
-        logger.info(f"Third: pair = {max_profit.get("pairs")[2]}, ask = {max_profit.get("ask_3")}")
+        # a) Get data concurrently.
+        valid_groups_df = get_all_currency_tickers_data()
+        valid_groups_df = valid_groups_df.loc[valid_groups_df["altname"].isin(valid_currencies) | valid_groups_df["name"].isin(valid_currencies)]
 
-        # a)
-        first_pair = max_profit.get("pairs")[0]
-        second_pair = max_profit.get("pairs")[1]
-        third_pair = max_profit.get("pairs")[2]
-        pairs = pd.DataFrame({
-             "pair": pd.Series(max_profit.get("pairs")), 
-             "type": pd.Series(["bid","bid","ask"]), 
-             "price": pd.Series([max_profit.get("bid_1"), max_profit.get("bid_2"), max_profit.get("ask_3")]) 
-             })
-        body = f"""
-        {pairs.to_html(index=False)}
-        Profit: {max_profit.get("current_profit")}
-        """
-        send_email("service@manningcapital.co.uk", ["glynfinck97@gmail.com"], "Triangular Arbitrage Detected",body)
+        # b) Query current close from all market status.
+        groups_df = pd.DataFrame([ { "group" : i + 1, "order" : j + 1, "altname" : altname } for i,y in enumerate(valid_groups) for j,altname in enumerate(y) ])
+        groups_pivot_df = groups_df.merge(valid_groups_df,how="left",on=["altname"]).pivot(index=["group"],columns=["order"],values=["altname", "ask","bid"])
+        groups_pivot_df["bid_1"] = groups_pivot_df["bid"][1]
+        groups_pivot_df["bid_2"] = groups_pivot_df["bid"][2]
+        groups_pivot_df["ask_3"] = groups_pivot_df["ask"][3]
+        groups_pivot_df["current_profit"] = groups_pivot_df["bid"][1] * groups_pivot_df["bid"][2] * (1 / groups_pivot_df["ask"][3])
+        groups_pivot_df["pairs"] = groups_pivot_df["altname"].apply(lambda x: [x[1],x[2],x[3]], axis=1)
+        groups_pivot_df = pd.DataFrame({ "pairs" : pd.Series(groups_pivot_df["pairs"].to_list()), "bid_1": pd.Series(groups_pivot_df["bid_1"].to_list()), "bid_2":pd.Series(groups_pivot_df["bid_2"].to_list()), "ask_3": pd.Series(groups_pivot_df["ask_3"].to_list()), "current_profit" : pd.Series(groups_pivot_df["current_profit"].to_list()) })
         
+        # c) Take the greatest profit.
+        max_profit = groups_pivot_df.loc[groups_pivot_df["current_profit"] == groups_pivot_df["current_profit"].max()].to_dict("records")[0]
 
-        # b)
-        # first_from_iso = pairs.loc[pairs["altname"] == first_pair]["from_iso"].to_list()[0]
-        # second_from_iso = pairs.loc[pairs["altname"] == second_pair]["from_iso"].to_list()[0]
-        # third_to_iso = pairs.loc[pairs["altname"] == third_pair]["to_iso"].to_list()[0]
+        # d) Execute trade if the profit exceeds threshold.
+        logger.info(f"Max profit: {max_profit.get("current_profit")}")
+        if max_profit.get("current_profit") > 1 + (((fee * 3) + threshold) / 100):
+            logger.info(f"First: pair = {max_profit.get("pairs")[0]}, bid = {max_profit.get("bid_1")}")
+            logger.info(f"Second: pair = {max_profit.get("pairs")[1]}, bid = {max_profit.get("bid_2")}")
+            logger.info(f"Third: pair = {max_profit.get("pairs")[2]}, ask = {max_profit.get("ask_3")}")
+            pairs = pd.DataFrame({
+                "pair": pd.Series(max_profit.get("pairs")), 
+                "type": pd.Series(["bid","bid","ask"]), 
+                "price": pd.Series([max_profit.get("bid_1"), max_profit.get("bid_2"), max_profit.get("ask_3")]) 
+                })
+            body = f"""
+            {pairs.to_html(index=False)}
+            Profit: {max_profit.get("current_profit")}
+            """
+            send_email("service@manningcapital.co.uk", ["glynfinck97@gmail.com"], "Triangular Arbitrage Detected",body)
 
-        # c)
-        # first_position = balance.loc[balance["altname"] == first_from_iso]
-        # second_position = balance.loc[balance["altname"] == second_from_iso]
-        # third_position = balance.loc[balance["altname"] == third_to_iso]
-
-
-        # d) Make trades.
-        # first_order = add_order(first_pair, "sell", first_position ,max_profit.get("ask_1"),validate=True)
-        # second_order = add_order(second_pair, "sell", second_position, max_profit.get("ask_2"),validate=True)
-        # third_order = add_order(third_pair, "sell", third_position, max_profit.get("bid_3"),validate=True)
-
-        # e) 
-
-        # b) Wait 30 seconds for all trades to execute.
-
-        # c) If some trades suceeded and some trades failed, reverse the failed ones.
-
-        logger.info(f"Just traded! Made a profit of: ${round((max_profit.get("current_profit") - 1) * trade_size, 2)}")
+        # e) Sleep for wait seconds.
+        time.sleep(wait_seconds * 1.0)
 
 if __name__ == "__main__":
-    source = GitRepository(
-        url="https://github.com/glynfinck/trading.git",
-        credentials=GitHubCredentials.load("github-credentials"),
-        branch="main"
-    )
-    triangular_arbitrage.from_source(
-        source=source, 
-        entrypoint="triangular_arbitrage.py:triangular_arbitrage") \
-    .deploy(
-        name="triangular-arbitrage",
-        work_pool_name="default",
-        interval=20
-    )
+    triangular_arbitrage()
