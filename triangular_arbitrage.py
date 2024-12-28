@@ -336,12 +336,11 @@ if __name__ == "__main__":
         credentials=GitHubCredentials.load("github-credentials"),
         branch="main"
     )
-
     triangular_arbitrage.from_source(
         source=source, 
         entrypoint="triangular_arbitrage.py:triangular_arbitrage") \
     .deploy(
         name="triangular-arbitrage",
         work_pool_name="default",
-        interval=10
+        interval=15
     )
