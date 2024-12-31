@@ -180,7 +180,7 @@ def add_order(pair: str, action_type: str, volume: float, price: float, validate
 
 @task
 def get_currency_data() -> pd.DataFrame:
-    return utils.query_table("SELECT currency,iso FROM \"Currency\"")
+    return utils.query_table("SELECT currency,name FROM \"Currency\"")
 
 @flow()
 def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, wait_seconds: float = 2.0, n_iterations: int = 600):
@@ -189,7 +189,7 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
     # 1. Get unique pairs.
     currency = get_currency_data()
     if len(ignore_currency_isos) != 0:
-        currency = currency.loc[~currency["iso"].isin(ignore_currency_isos)]
+        currency = currency.loc[~currency["name"].isin(ignore_currency_isos)]
     pairs = utils.query_table("""
     SELECT
         FROM_CURRENCY,
@@ -205,12 +205,12 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
             FROM
                 "DailyProviderCurrencyMarket"
 	)""")
-    pairs = pairs.merge(currency[["iso","currency"]].rename(columns={ "iso": "from_iso", "currency": "from_currency" }), how="left", on=["from_currency"])
-    pairs = pairs.merge(currency[["iso","currency"]].rename(columns={ "iso": "to_iso", "currency": "to_currency" }), how="left", on=["to_currency"])
+    pairs = pairs.merge(currency[["name","currency"]].rename(columns={ "name": "from_iso", "currency": "from_currency" }), how="left", on=["from_currency"])
+    pairs = pairs.merge(currency[["name","currency"]].rename(columns={ "name": "to_iso", "currency": "to_currency" }), how="left", on=["to_currency"])
     pairs["pair"] = pairs["from_iso"] + pairs["to_iso"]
 
     # 2. Get all combinations from current currencies.
-    tris = list(itertools.combinations(currency["iso"].to_list(),3))
+    tris = list(itertools.combinations(currency["name"].to_list(),3))
     pairs_set = set([ tuple([x["from_iso"],x["to_iso"]]) for x in pairs.to_dict("records") ])
     triangular_groups = []
     for x in tris:
@@ -268,14 +268,16 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         valid_groups_df = valid_groups_df.loc[valid_groups_df["altname"].isin(valid_currencies) | valid_groups_df["name"].isin(valid_currencies)]
 
         # b) Query current close from all market status.
+        # bid = highest price that a buyer will pay for the left currency, will use this to go from left to right
+        # ask = lowest price that a seller will sell for the left currency, will use this to go from right to left
         groups_df = pd.DataFrame([ { "group" : i + 1, "order" : j + 1, "altname" : altname } for i,y in enumerate(valid_groups) for j,altname in enumerate(y) ])
         groups_pivot_df = groups_df.merge(valid_groups_df,how="left",on=["altname"]).pivot(index=["group"],columns=["order"],values=["altname", "ask","bid"])
-        groups_pivot_df["bid_1"] = groups_pivot_df["bid"][1]
-        groups_pivot_df["bid_2"] = groups_pivot_df["bid"][2]
-        groups_pivot_df["ask_3"] = groups_pivot_df["ask"][3]
-        groups_pivot_df["current_profit"] = groups_pivot_df["bid"][1] * groups_pivot_df["bid"][2] * (1 / groups_pivot_df["ask"][3])
+        groups_pivot_df["ask_1"] = groups_pivot_df["ask"][1]
+        groups_pivot_df["ask_2"] = groups_pivot_df["ask"][2]
+        groups_pivot_df["bid_3"] = groups_pivot_df["bid"][3]
+        groups_pivot_df["current_profit"] = (1 / groups_pivot_df["ask_1"]) * (1 / groups_pivot_df["ask_2"]) * groups_pivot_df["bid_3"]
         groups_pivot_df["pairs"] = groups_pivot_df["altname"].apply(lambda x: [x[1],x[2],x[3]], axis=1)
-        groups_pivot_df = pd.DataFrame({ "pairs" : pd.Series(groups_pivot_df["pairs"].to_list()), "bid_1": pd.Series(groups_pivot_df["bid_1"].to_list()), "bid_2":pd.Series(groups_pivot_df["bid_2"].to_list()), "ask_3": pd.Series(groups_pivot_df["ask_3"].to_list()), "current_profit" : pd.Series(groups_pivot_df["current_profit"].to_list()) })
+        groups_pivot_df = pd.DataFrame({ "pairs" : pd.Series(groups_pivot_df["pairs"].to_list()), "ask_1": pd.Series(groups_pivot_df["ask_1"].to_list()), "ask_2":pd.Series(groups_pivot_df["ask_2"].to_list()), "bid_3": pd.Series(groups_pivot_df["bid_3"].to_list()), "current_profit" : pd.Series(groups_pivot_df["current_profit"].to_list()) })
         
         # c) Take the greatest profit.
         max_profit = groups_pivot_df.loc[groups_pivot_df["current_profit"] == groups_pivot_df["current_profit"].max()].to_dict("records")[0]
@@ -283,13 +285,13 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         # d) Execute trade if the profit exceeds threshold.
         logger.info(f"Max profit: {max_profit.get("current_profit")}")
         if max_profit.get("current_profit") > 1 + (((fee * 3) + threshold) / 100):
-            logger.info(f"First: pair = {max_profit.get("pairs")[0]}, bid = {max_profit.get("bid_1")}")
-            logger.info(f"Second: pair = {max_profit.get("pairs")[1]}, bid = {max_profit.get("bid_2")}")
-            logger.info(f"Third: pair = {max_profit.get("pairs")[2]}, ask = {max_profit.get("ask_3")}")
+            logger.info(f"First: pair = {max_profit.get("pairs")[0]}, ask = {max_profit.get("ask_1")}")
+            logger.info(f"Second: pair = {max_profit.get("pairs")[1]}, ask = {max_profit.get("ask_2")}")
+            logger.info(f"Third: pair = {max_profit.get("pairs")[2]}, bid = {max_profit.get("bid_3")}")
             pairs = pd.DataFrame({
                 "pair": pd.Series(max_profit.get("pairs")), 
-                "type": pd.Series(["bid","bid","ask"]), 
-                "price": pd.Series([max_profit.get("bid_1"), max_profit.get("bid_2"), max_profit.get("ask_3")]) 
+                "type": pd.Series(["ask","ask","bid"]), 
+                "price": pd.Series([max_profit.get("ask_1"), max_profit.get("ask_2"), max_profit.get("bid_3")]) 
                 })
             body = f"""
             {pairs.to_html(index=False)}
@@ -301,4 +303,4 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         time.sleep(wait_seconds * 1.0)
 
 if __name__ == "__main__":
-    triangular_arbitrage()
+    triangular_arbitrage(n_iterations=20)
