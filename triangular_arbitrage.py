@@ -229,7 +229,7 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         left = pairs_grouping_1.loc[pairs_grouping_1["count"] == pairs_grouping_1["count"].max()]["from_iso"].to_list()[0]
         pairs_grouping_2 = pairs.loc[pairs["from_iso"].isin(group) & pairs["to_iso"].isin(group)].groupby(by=["to_iso"]).size().reset_index(name="count")
         right = pairs_grouping_2.loc[pairs_grouping_1["count"] == pairs_grouping_2["count"].max()]["to_iso"].to_list()[0]
-        middle = pd.Series(group).loc[~pd.Series(group).isin([left,right])][0]
+        middle = pd.Series(group).loc[~pd.Series(group).isin([left,right])].to_list()[0]
 
         first = example_pairs.loc[(example_pairs["from_iso"] == left) & (example_pairs["to_iso"] == middle)][["from_iso","to_iso","pair"]].to_dict("records")[0]
         second =  example_pairs.loc[(example_pairs["to_iso"] == right) & (example_pairs["to_iso"] != middle)][["from_iso","to_iso","pair"]].to_dict("records")[0]
