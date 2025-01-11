@@ -1,3 +1,8 @@
+import os
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+
 import time
 import urllib.parse
 import hashlib
@@ -6,52 +11,11 @@ import base64
 import requests
 import pandas as pd
 from prefect import flow, task, get_run_logger
-from database import utils
+from modules.database import utils
 import itertools
 from prefect.variables import Variable
-from shared.utils import send_email
-
-class CurrencyData:
+from modules.shared.utils import send_email
     
-    symbol: str
-    ask_price: float
-    ask_quantity: float
-    bid_price: float
-    bid_quantity: float
-
-    def __init__(self, symbol: str, ask_price: float, ask_quantity: float, bid_price: float, bid_quantity: float):
-        self.symbol = symbol
-        self.ask_price = ask_price
-        self.ask_quantity = ask_quantity
-        self.bid_price = bid_price
-        self.bid_quantity = bid_quantity
-
-class TriangularArbitrage:
-
-    def __init__(self):
-        pass
-
-    def __get_currency_data(tickers: list[str]) -> list[CurrencyData]:
-        pass
-
-    def run(self, tickers: list[str]):
-        
-        # 1. 
-        currency = self.__get_currency_data(tickers)
-
-class BinanaceTriangularArbitrage(TriangularArbitrage):
-
-    def __get_currency_data(tickers: list[str]) -> list[CurrencyData]:
-        response = requests.get("https://api.binance.com/api/v3/ticker/bookTicker")
-        json: list[dict] = response.json()
-        return [ CurrencyData(item.get("symbol"), item.get("bidPrice"), item.get("bidQty"), item.get("askPrice"), item.get("askQty")) for item in json ]
-
-class KrakenTriangularArbitrage(TriangularArbitrage):
-
-    def __get_currency_data(tickers: list[str]) -> list[CurrencyData]:
-        pass
-    
-
 @task
 def get_assets():
     data = requests.get("https://api.kraken.com/0/public/Assets").json()
@@ -62,6 +26,7 @@ def get_asset_pairs():
     data = requests.get("https://api.kraken.com/0/public/AssetPairs").json()
     return pd.DataFrame([ { "name": k, "altname": v.get("altname") }  for k,v in data.get("result").items() ])
 
+@task
 def get_kraken_api_headers(uri_path: str, data: dict) -> dict:
 
     # 1. Setup variables.
@@ -182,7 +147,7 @@ def add_order(pair: str, action_type: str, volume: float, price: float, validate
 def get_currency_data() -> pd.DataFrame:
     return utils.query_table("SELECT currency,name FROM \"Currency\"")
 
-@flow()
+@flow
 def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, wait_seconds: float = 2.0, n_iterations: int = 600):
     logger = get_run_logger()
 

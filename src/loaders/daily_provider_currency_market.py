@@ -1,7 +1,11 @@
-from datetime import date
+import os
+import sys
 
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from datetime import date
 from prefect import flow, task, get_run_logger
-from database import utils
+from modules.database import utils
 
 @flow()
 def daily_provider_currency_market(date: date):
