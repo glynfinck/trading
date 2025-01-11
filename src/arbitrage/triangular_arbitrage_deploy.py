@@ -10,7 +10,7 @@ if __name__ == "__main__":
     )
     triangular_arbitrage.from_source(
         source=source, 
-        entrypoint="triangular_arbitrage.py:triangular_arbitrage") \
+        entrypoint="src\\arbitrage\\triangular_arbitrage.py:triangular_arbitrage") \
     .deploy(
         name="triangular-arbitrage",
         work_pool_name="default",
