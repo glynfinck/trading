@@ -15,6 +15,7 @@ from modules.database import utils
 import itertools
 from prefect.variables import Variable
 from modules.shared.utils import send_email
+from modules.shared.exchanges import get_kraken_trade_book
     
 @task
 def get_assets():
