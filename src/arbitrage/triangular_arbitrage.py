@@ -148,7 +148,7 @@ def get_currency_data() -> pd.DataFrame:
     return utils.query_table("SELECT currency,name FROM \"Currency\"")
 
 @flow
-def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, wait_seconds: float = 2.0, n_iterations: int = 600):
+def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, wait_seconds: float = 2.0, duration_minutes: int = 30):
     logger = get_run_logger()
 
     # 1. Get unique pairs.
@@ -226,7 +226,8 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         return
 
     # 6. Start loop to check multiple times.
-    for _ in range(n_iterations):
+    start_time = time.time()
+    while True:
         
         # a) Get data concurrently.
         valid_groups_df = get_all_currency_tickers_data()
@@ -267,5 +268,11 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
         # e) Sleep for wait seconds.
         time.sleep(wait_seconds * 1.0)
 
+        # f) Check if time has exceeded.
+        elapsed_minutes = (time.time() - start_time) / 60
+        if elapsed_minutes > duration_minutes:
+            logger.info(f"Elapsed minutes: {elapsed_minutes}. Exiting.")
+            break
+
 if __name__ == "__main__":
-    triangular_arbitrage(n_iterations=20)
+    triangular_arbitrage(duration_minutes=1)
