@@ -9,8 +9,10 @@ import okx.Account
 import okx.Funding
 import requests
 import pandas as pd
+import numpy as np
 from coinbase import jwt_generator
 from prefect.variables import Variable
+import concurrent.futures
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -171,3 +173,21 @@ def get_mexc_trade_book():
 def get_max_profit(row, provider_combinations):
     lst = [ row["bid_price"][c[0]] / row["ask_price"][c[1]] for c in provider_combinations if not pd.isnull(row["bid_price"][c[0]]) and not pd.isnull(row["ask_price"][c[1]]) ]
     return None if len(lst) == 0 else max(lst)
+
+def get_trade_book():
+    all_data = []
+    functions = [get_kraken_trade_book, get_coinbase_trade_book, get_htx_trade_book, get_mexc_trade_book]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(functions)) as executor:
+        future_to_url = {executor.submit(function): function for function in functions}
+        for future in concurrent.futures.as_completed(future_to_url):
+            function = future_to_url[future]
+            try:
+                data = future.result()
+            except Exception as exc:
+                print('%r generated an exception: %s' % (str(function.__name__), exc))
+            else:
+                all_data.append(data)     
+    df_all = pd.concat(all_data)
+    df_all.replace({ 0.0 : None }, inplace=True)
+    df_all.replace({ np.nan : None }, inplace=True)  
+    return df_all
