@@ -14,5 +14,5 @@ if __name__ == "__main__":
     .deploy(
         name="triangular-arbitrage",
         work_pool_name="default",
-        interval=1440
+        interval=1800
     )
