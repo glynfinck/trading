@@ -149,14 +149,28 @@ def get_currency_data() -> pd.DataFrame:
     return utils.query_table("SELECT currency,name FROM \"Currency\"")
 
 @flow
-def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee: float = 0.4, wait_seconds: float = 2.0, duration_minutes: int = 30):
+def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fee = 0.4, wait_seconds: float = 2.0, duration_minutes: int = 30):
     logger = get_run_logger()
 
     # 1. Get unique pairs.
     currency = get_currency_data()
     if len(ignore_currency_isos) != 0:
         currency = currency.loc[~currency["name"].isin(ignore_currency_isos)]
-    pairs = get_kraken_trade_book()
+    pairs = utils.query_table("""
+    SELECT
+        FROM_CURRENCY,
+        TO_CURRENCY,
+        CLOSE,
+        VOLUME
+    FROM
+        "DailyProviderCurrencyMarket"
+    WHERE
+        DATE IN (
+            SELECT
+                MAX(DATE)
+            FROM
+                "DailyProviderCurrencyMarket"
+	)""")
     pairs = pairs.merge(currency[["name","currency"]].rename(columns={ "name": "from_iso", "currency": "from_currency" }), how="left", on=["from_currency"])
     pairs = pairs.merge(currency[["name","currency"]].rename(columns={ "name": "to_iso", "currency": "to_currency" }), how="left", on=["to_currency"])
     pairs["pair"] = pairs["from_iso"] + pairs["to_iso"]
@@ -217,7 +231,7 @@ def triangular_arbitrage(ignore_currency_isos: list[str] = [], threshold = 2, fe
     while True:
         
         # a) Get data concurrently.
-        valid_groups_df = get_kraken_trade_book()
+        valid_groups_df = get_all_currency_tickers_data()
         valid_groups_df = valid_groups_df.loc[valid_groups_df["altname"].isin(valid_currencies) | valid_groups_df["name"].isin(valid_currencies)]
 
         # b) Query current close from all market status.
