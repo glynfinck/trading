@@ -23,6 +23,6 @@ jobs:
       - name: Build and Push Prefect Default Worker Docker Image to DockerHub
         uses: docker/build-push-action@v5
         with:
-          context: workers/
+          context: workers/default/
           push: true
           tags: glynfinck/prefect-default-worker:latest
