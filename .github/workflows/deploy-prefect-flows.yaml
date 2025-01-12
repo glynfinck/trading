@@ -30,7 +30,7 @@ jobs:
           PREFECT_API_KEY: ${{ secrets.PREFECT_API_KEY }}
           PREFECT_API_URL: ${{ secrets.PREFECT_API_URL }}
         run: |
-          pip install -r workers/default/requirements.txt
-          for script in $(find . -name '*_deploy.py'); do
+          pip install -r worker/requirements.txt
+          for script in $(find src -name '*_deploy.py'); do
             python $script
           done
